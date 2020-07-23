@@ -38,6 +38,26 @@ export interface AuthOptions {
   };
 }
 
+/**
+ * Firefox and mobile should not use a 'popup' type of window.
+ */
+export const shouldUsePopup = () => {
+  const isMobile = !!('onTouchStart' in document.documentElement);
+
+  // const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
+  // return !isMobile && !isFirefox;
+
+  return !isMobile;
+};
+
+export const getOrCreateUserSession = (userSession?: UserSession): UserSession => {
+  if (!userSession) {
+    const appConfig = new AppConfig(['store_write'], document.location.href);
+    userSession = new UserSession({ appConfig });
+  }
+  return userSession;
+};
+
 export const authenticate = async ({
   redirectTo = '/',
   manifestPath,
@@ -46,13 +66,10 @@ export const authenticate = async ({
   onCancel,
   authOrigin,
   sendToSignIn = false,
-  userSession,
+  userSession: _userSession,
   appDetails,
 }: AuthOptions) => {
-  if (!userSession) {
-    const appConfig = new AppConfig(['store_write'], document.location.href);
-    userSession = new UserSession({ appConfig });
-  }
+  const userSession = getOrCreateUserSession(_userSession);
   if (userSession.isUserSignedIn()) {
     userSession.signUserOut();
   }
@@ -85,21 +102,27 @@ export const authenticate = async ({
   const extensionURL = await window.BlockstackProvider?.getURL();
   const authURL = new URL(extensionURL || authOrigin || defaultAuthURL);
 
-  const popup = popupCenter({
-    url: `${authURL.origin}/index.html#/${path}?${urlParams.toString()}`,
-    // If the extension is installed, dont worry about popup blocking
-    // Otherwise, firefox will open the popup and a new tab.
-    skipPopupFallback: !!window.BlockstackProvider,
-  });
+  const url = `${authURL.origin}/index.html#/${path}?${urlParams.toString()}`;
+  if (shouldUsePopup()) {
+    const popup = popupCenter({
+      url,
+      // If the extension is installed, dont worry about popup blocking
+      // Otherwise, firefox will open the popup and a new tab.
+      skipPopupFallback: !!window.BlockstackProvider,
+    });
 
-  setupAuthListener({
-    popup,
-    authRequest,
-    onFinish: onFinish || finished,
-    authURL,
-    userSession,
-    onCancel,
-  });
+    setupAuthListener({
+      popup,
+      authRequest,
+      onFinish: onFinish || finished,
+      authURL,
+      userSession,
+      onCancel,
+    });
+    return;
+  }
+
+  location.assign(url);
 };
 
 interface FinishedEventData {
@@ -145,4 +168,15 @@ const setupAuthListener = ({
     },
     authURL,
   });
+};
+
+export const getUserData = async (userSession?: UserSession) => {
+  userSession = getOrCreateUserSession(userSession);
+  if (userSession.isUserSignedIn()) {
+    return userSession.loadUserData();
+  }
+  if (userSession.isSignInPending()) {
+    return userSession.handlePendingSignIn();
+  }
+  return null;
 };
